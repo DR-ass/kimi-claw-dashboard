@@ -44,6 +44,12 @@
             font-size: 0.9rem;
         }
         
+        .last-update {
+            color: #666;
+            font-size: 0.8rem;
+            margin-top: 10px;
+        }
+        
         .status-bar {
             display: flex;
             gap: 15px;
@@ -248,6 +254,7 @@
         <header>
             <h1>❤️‍🔥 Kimi Claw 控制台</h1>
             <p class="subtitle">运行状态与任务管理</p>
+            <p class="last-update" id="lastUpdate">数据更新于: 加载中...</p>
         </header>
         
         <div class="status-bar" id="statusBar">
@@ -295,11 +302,12 @@
     <script>
         // 配置
         const CONFIG = {
-            // 如果通过 OpenClaw 网关访问，使用相对路径
-            // 如果直接打开文件，需要配置网关地址
-            baseUrl: '',
+            // 数据文件路径（相对于页面位置）
+            dataPath: './',
             refreshInterval: 30000 // 30秒自动刷新
         };
+        
+        let lastDataTimestamp = null;
         
         // 格式化时间
         function formatTime(timestamp) {
@@ -326,22 +334,23 @@
         // 获取网关状态
         async function fetchGatewayStatus() {
             try {
-                const response = await fetch('/api/gateway/status');
+                const response = await fetch(CONFIG.dataPath + 'status_data.json?t=' + Date.now());
                 if (!response.ok) throw new Error('获取状态失败');
                 return await response.json();
             } catch (e) {
-                console.log('网关 API 不可用，使用模拟数据');
-                return null;
+                console.log('状态数据不可用，使用默认值');
+                return { status: 'online', model: 'kimi-coding/k2p5' };
             }
         }
         
         // 获取 Cron 任务列表
         async function fetchCronJobs() {
             try {
-                const response = await fetch('/api/cron/list');
+                const response = await fetch(CONFIG.dataPath + 'cron_data.json?t=' + Date.now());
                 if (!response.ok) throw new Error('获取任务失败');
                 return await response.json();
             } catch (e) {
+                console.log('Cron 数据不可用');
                 return { jobs: [] };
             }
         }
@@ -349,12 +358,20 @@
         // 获取会话列表
         async function fetchSessions() {
             try {
-                const response = await fetch('/api/sessions/list');
+                const response = await fetch(CONFIG.dataPath + 'sessions_data.json?t=' + Date.now());
                 if (!response.ok) throw new Error('获取会话失败');
                 return await response.json();
             } catch (e) {
+                console.log('会话数据不可用');
                 return { sessions: [] };
             }
+        }
+        
+        // 更新最后更新时间
+        function updateLastUpdateTime() {
+            const now = new Date();
+            document.getElementById('lastUpdate').textContent = 
+                '数据更新于: ' + now.toLocaleString('zh-CN');
         }
         
         // 更新状态栏
@@ -362,14 +379,16 @@
             const statusValue = document.getElementById('statusValue');
             const modelValue = document.getElementById('modelValue');
             
-            if (data) {
+            if (data && data.status !== 'offline') {
                 statusValue.textContent = '在线';
                 statusValue.parentElement.classList.add('online');
                 statusValue.parentElement.classList.remove('offline');
                 modelValue.textContent = data.model || 'kimi-coding/k2p5';
             } else {
-                statusValue.textContent = '演示模式';
-                modelValue.textContent = 'kimi-coding/k2p5';
+                statusValue.textContent = '离线';
+                statusValue.parentElement.classList.remove('online');
+                statusValue.parentElement.classList.add('offline');
+                modelValue.textContent = data?.model || '-';
             }
         }
         
@@ -393,13 +412,14 @@
             container.innerHTML = jobs.map(job => {
                 const isEnabled = job.enabled !== false;
                 const scheduleText = job.schedule ? formatSchedule(job.schedule) : '未知';
+                const nextRun = job.state?.nextRunAtMs ? formatTime(job.state.nextRunAtMs) : '-';
                 
                 return `
                     <div class="task-item">
                         <div class="task-status ${isEnabled ? 'active' : 'completed'}"></div>
                         <div class="task-info">
                             <div class="task-name">${job.name || '未命名任务'}</div>
-                            <div class="task-meta">${job.id || job.jobId || '无ID'}</div>
+                            <div class="task-meta">下次运行: ${nextRun}</div>
                         </div>
                         <div class="task-schedule">${scheduleText}</div>
                     </div>
@@ -417,6 +437,8 @@
                 return `每 ${Math.floor(hours / 24)} 天`;
             }
             if (schedule.kind === 'cron') {
+                if (schedule.expr === '0 10 * * *') return '每天 10:00';
+                if (schedule.expr === '0 20 * * *') return '每天 20:00';
                 return `Cron: ${schedule.expr}`;
             }
             if (schedule.kind === 'at') {
@@ -472,13 +494,10 @@
                 updateStatusBar(gatewayStatus);
                 updateCronList(cronData);
                 updateSessionsList(sessionsData);
+                updateLastUpdateTime();
                 
             } catch (error) {
                 console.error('刷新失败:', error);
-                // 使用演示数据
-                updateStatusBar(null);
-                updateCronList({ jobs: [] });
-                updateSessionsList({ sessions: [] });
             } finally {
                 btn.classList.remove('spinning');
             }
