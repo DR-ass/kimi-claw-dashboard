@@ -95,6 +95,10 @@
             color: #ef4444;
         }
         
+        .status-card.busy .value {
+            color: #fbbf24;
+        }
+        
         .section {
             background: rgba(255,255,255,0.03);
             border-radius: 20px;
@@ -157,6 +161,21 @@
         
         .task-status.completed {
             background: #6b7280;
+        }
+        
+        .task-status.running {
+            background: #3b82f6;
+            box-shadow: 0 0 10px #3b82f6;
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+        
+        .task-status.queued {
+            background: #a855f7;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
         }
         
         .task-info {
@@ -242,6 +261,41 @@
             margin-bottom: 20px;
         }
         
+        .agent-status-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+        
+        .agent-status-indicator.idle {
+            background: rgba(74, 222, 128, 0.1);
+            color: #4ade80;
+        }
+        
+        .agent-status-indicator.busy {
+            background: rgba(251, 191, 36, 0.1);
+            color: #fbbf24;
+        }
+        
+        .agent-status-indicator .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+        
+        .agent-status-indicator.idle .dot {
+            background: #4ade80;
+        }
+        
+        .agent-status-indicator.busy .dot {
+            background: #fbbf24;
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+        
         @media (max-width: 768px) {
             h1 { font-size: 1.5rem; }
             .status-card { min-width: 120px; padding: 15px 20px; }
@@ -258,7 +312,7 @@
         </header>
         
         <div class="status-bar" id="statusBar">
-            <div class="status-card online">
+            <div class="status-card online" id="agentStatusCard">
                 <div class="label">运行状态</div>
                 <div class="value" id="statusValue">加载中...</div>
             </div>
@@ -273,6 +327,30 @@
             <div class="status-card">
                 <div class="label">定时任务</div>
                 <div class="value" id="cronValue">-</div>
+            </div>
+            <div class="status-card">
+                <div class="label">队列任务</div>
+                <div class="value" id="queueValue">-</div>
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2 class="section-title">当前状态</h2>
+            <div id="currentStatus">
+                <div class="empty-state">
+                    <div class="empty-state-icon">⏳</div>
+                    <p>加载中...</p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2 class="section-title">任务队列</h2>
+            <div class="task-list" id="queueList">
+                <div class="empty-state">
+                    <div class="empty-state-icon">📋</div>
+                    <p>加载中...</p>
+                </div>
             </div>
         </div>
         
@@ -295,6 +373,16 @@
                 </div>
             </div>
         </div>
+        
+        <div class="section">
+            <h2 class="section-title">最近完成的任务</h2>
+            <div class="task-list" id="completedList">
+                <div class="empty-state">
+                    <div class="empty-state-icon">✅</div>
+                    <p>暂无记录</p>
+                </div>
+            </div>
+        </div>
     </div>
     
     <button class="refresh-btn" id="refreshBtn" onclick="refreshData()">↻</button>
@@ -302,9 +390,8 @@
     <script>
         // 配置
         const CONFIG = {
-            // 数据文件路径（相对于页面位置）
             dataPath: './',
-            refreshInterval: 30000 // 30秒自动刷新
+            refreshInterval: 10000 // 10秒自动刷新
         };
         
         let lastDataTimestamp = null;
@@ -317,7 +404,8 @@
                 month: 'short',
                 day: 'numeric',
                 hour: '2-digit',
-                minute: '2-digit'
+                minute: '2-digit',
+                second: '2-digit'
             });
         }
         
@@ -331,39 +419,14 @@
             return `${Math.floor(seconds / 86400)} 天前`;
         }
         
-        // 获取网关状态
-        async function fetchGatewayStatus() {
+        // 获取数据
+        async function fetchData(filename) {
             try {
-                const response = await fetch(CONFIG.dataPath + 'status_data.json?t=' + Date.now());
-                if (!response.ok) throw new Error('获取状态失败');
+                const response = await fetch(CONFIG.dataPath + filename + '?t=' + Date.now());
+                if (!response.ok) throw new Error('获取失败');
                 return await response.json();
             } catch (e) {
-                console.log('状态数据不可用，使用默认值');
-                return { status: 'online', model: 'kimi-coding/k2p5' };
-            }
-        }
-        
-        // 获取 Cron 任务列表
-        async function fetchCronJobs() {
-            try {
-                const response = await fetch(CONFIG.dataPath + 'cron_data.json?t=' + Date.now());
-                if (!response.ok) throw new Error('获取任务失败');
-                return await response.json();
-            } catch (e) {
-                console.log('Cron 数据不可用');
-                return { jobs: [] };
-            }
-        }
-        
-        // 获取会话列表
-        async function fetchSessions() {
-            try {
-                const response = await fetch(CONFIG.dataPath + 'sessions_data.json?t=' + Date.now());
-                if (!response.ok) throw new Error('获取会话失败');
-                return await response.json();
-            } catch (e) {
-                console.log('会话数据不可用');
-                return { sessions: [] };
+                return null;
             }
         }
         
@@ -374,28 +437,81 @@
                 '数据更新于: ' + now.toLocaleString('zh-CN');
         }
         
-        // 更新状态栏
-        function updateStatusBar(data) {
-            const statusValue = document.getElementById('statusValue');
-            const modelValue = document.getElementById('modelValue');
+        // 更新当前状态
+        function updateCurrentStatus(data) {
+            const container = document.getElementById('currentStatus');
+            const isBusy = data?.isBusy || false;
+            const currentTask = data?.currentTask;
             
-            if (data && data.status !== 'offline') {
-                statusValue.textContent = '在线';
-                statusValue.parentElement.classList.add('online');
-                statusValue.parentElement.classList.remove('offline');
-                modelValue.textContent = data.model || 'kimi-coding/k2p5';
+            const statusCard = document.getElementById('agentStatusCard');
+            const statusValue = document.getElementById('statusValue');
+            
+            if (isBusy) {
+                statusCard.classList.remove('online', 'offline');
+                statusCard.classList.add('busy');
+                statusValue.textContent = '忙碌';
             } else {
-                statusValue.textContent = '离线';
-                statusValue.parentElement.classList.remove('online');
-                statusValue.parentElement.classList.add('offline');
-                modelValue.textContent = data?.model || '-';
+                statusCard.classList.remove('busy', 'offline');
+                statusCard.classList.add('online');
+                statusValue.textContent = '在线';
             }
+            
+            if (currentTask) {
+                container.innerHTML = `
+                    <div class="task-item">
+                        <div class="task-status running"></div>
+                        <div class="task-info">
+                            <div class="task-name">${currentTask.name || '执行任务'}</div>
+                            <div class="task-meta">开始于 ${formatTime(currentTask.startTime)} · 已运行 ${timeAgo(currentTask.startTime)}</div>
+                        </div>
+                        <div class="task-schedule">执行中</div>
+                    </div>
+                `;
+            } else {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state-icon">☕</div>
+                        <p>当前空闲，等待任务中...</p>
+                    </div>
+                `;
+            }
+        }
+        
+        // 更新任务队列
+        function updateQueueList(data) {
+            const container = document.getElementById('queueList');
+            const queue = data?.queue || [];
+            
+            document.getElementById('queueValue').textContent = queue.length;
+            
+            if (queue.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state-icon">📭</div>
+                        <p>队列为空</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            container.innerHTML = queue.map((task, index) => {
+                return `
+                    <div class="task-item">
+                        <div class="task-status queued"></div>
+                        <div class="task-info">
+                            <div class="task-name">${task.name || '未命名任务'}</div>
+                            <div class="task-meta">队列位置: #${index + 1} · ${task.type || '普通任务'}</div>
+                        </div>
+                        <div class="task-schedule">等待中</div>
+                    </div>
+                `;
+            }).join('');
         }
         
         // 更新 Cron 任务列表
         function updateCronList(data) {
             const container = document.getElementById('cronList');
-            const jobs = data.jobs || [];
+            const jobs = data?.jobs || [];
             
             document.getElementById('cronValue').textContent = jobs.length;
             
@@ -450,7 +566,7 @@
         // 更新会话列表
         function updateSessionsList(data) {
             const container = document.getElementById('sessionsList');
-            const sessions = data.sessions || [];
+            const sessions = data?.sessions || [];
             
             document.getElementById('sessionsValue').textContent = sessions.length;
             
@@ -478,22 +594,53 @@
             }).join('');
         }
         
+        // 更新已完成任务列表
+        function updateCompletedList(data) {
+            const container = document.getElementById('completedList');
+            const completed = data?.completed || [];
+            
+            if (completed.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state-icon">✅</div>
+                        <p>暂无记录</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            container.innerHTML = completed.slice(0, 5).map(task => {
+                return `
+                    <div class="task-item">
+                        <div class="task-status completed"></div>
+                        <div class="task-info">
+                            <div class="task-name">${task.name || '未命名任务'}</div>
+                            <div class="task-meta">完成于 ${timeAgo(task.completedAt)}</div>
+                        </div>
+                        <div class="task-schedule">已完成</div>
+                    </div>
+                `;
+            }).join('');
+        }
+        
         // 刷新所有数据
         async function refreshData() {
             const btn = document.getElementById('refreshBtn');
             btn.classList.add('spinning');
             
             try {
-                // 并行获取所有数据
-                const [gatewayStatus, cronData, sessionsData] = await Promise.all([
-                    fetchGatewayStatus(),
-                    fetchCronJobs(),
-                    fetchSessions()
+                const [agentStatus, cronData, sessionsData, queueData] = await Promise.all([
+                    fetchData('agent_status.json'),
+                    fetchData('cron_data.json'),
+                    fetchData('sessions_data.json'),
+                    fetchData('queue_data.json')
                 ]);
                 
-                updateStatusBar(gatewayStatus);
-                updateCronList(cronData);
-                updateSessionsList(sessionsData);
+                updateCurrentStatus(agentStatus || {});
+                updateQueueList(queueData || {});
+                updateCronList(cronData || {});
+                updateSessionsList(sessionsData || {});
+                updateCompletedList(agentStatus || {});
                 updateLastUpdateTime();
                 
             } catch (error) {
@@ -506,7 +653,6 @@
         // 初始化
         document.addEventListener('DOMContentLoaded', () => {
             refreshData();
-            // 自动刷新
             setInterval(refreshData, CONFIG.refreshInterval);
         });
     </script>
