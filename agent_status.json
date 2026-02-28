@@ -1,0 +1,9 @@
+{
+  "isBusy": false,
+  "currentTask": null,
+  "queue": [],
+  "completed": [
+    {"name": "仪表盘数据导出", "completedAt": 1740700800000},
+    {"name": "小红书运营日报-早间复盘", "completedAt": 1740700200000}
+  ]
+}
